@@ -9,10 +9,11 @@ let iceServers = {
 };
 function usePeer(props) {
     const remoteAudioRef = useRef(null)
-    const localAudioRef = useRef(null)
+    let localAudioRef = useRef(null)
     const [peer, setPeer] = useState(null)
     const from = props.user
-    const socket = new WebSocket(`wss://120.79.136.163:8501/api/ws/${from}/0`)
+    const localId = props.toId
+    const socket = new WebSocket(`wss://120.79.136.163:8502/api/ws/${from}/0`)
 
     // 创建本端端点
     const createPeer = () => {
@@ -42,12 +43,12 @@ function usePeer(props) {
         })
     }
 
-    const sendMsg = (operation, msg, webSocket) => {
+    const sendMsg = async (operation, msg, webSocket) => {
         let result = {
             eventName: operation,
             data: msg
         };
-        webSocket.send(JSON.stringify(result));
+        await webSocket.send(JSON.stringify(result));
     }
 
     const sendSdp = (operation, data, webSocket) => {
@@ -68,17 +69,22 @@ function usePeer(props) {
 
     // 挂断
     const hangUp = () => {
-        peer.getSenders().forEach(function (sender) {
-            sender.track.stop();
-        });
+        // peer.getSenders().forEach(function (sender) {
+        //     console.log(sender)
+        //     sender.track.stop();
+        // });
 
-        // 关闭所有的Transceivers
-        peer.getTransceivers().forEach(function (transceiver) {
-            transceiver.stop();
-        });
+        // // 关闭所有的Transceivers
+        // peer.getTransceivers().forEach(function (transceiver) {
+        //     console.log(transceiver)
+        //     transceiver.stop();
+        // });
 
         // 关闭信令通道，结束通信
         peer.close();
+        // localAudioRef.getTracks().forEach(track => track.stop())
+        setPeer(null)
+        localAudioRef = null
     }
 
     const createSocket = () => {
@@ -88,12 +94,13 @@ function usePeer(props) {
                 socket.send(JSON.stringify(ping))
             }, 30000)
         }
-
+        let timeout = null, time = null
         socket.onmessage = (evt) => {
             const evtData = JSON.parse(evt.data)
             const evtName = evtData.eventName
             const room = evtData.data.room;
             const to = evtData.data.inviteID;
+
             // eslint-disable-next-line default-case
             switch (evtName) {
                 case '__login_success':
@@ -101,19 +108,32 @@ function usePeer(props) {
                         localAudioRef.current.srcObject = stream
                         localAudioRef.current.play()
                     }) // 打开本地音频流
+
+                    time = setInterval(() => {
+                        socket.send(JSON.stringify({ eventName: '__ready', data: { userID: localId } }))
+                    }, 1000);
+                    timeout = setTimeout(() => {
+                        clearInterval(time)
+                        clearTimeout(timeout)
+                    }, 30000);
+
                     break;
                 case '__invite':
+                    if (time !== null) {
+                        clearInterval(time)
+                        time = null
+                    }
+
                     // 收到邀请
-                    sendMsg('__ring', { "toID": "" + to + "", "fromID": "" + from + "", "room": "" + room + "" }, socket)
+                    sendMsg('__ring', { toID: to, fromID: from, room }, socket)
                     // 加入房间
-                    sendMsg('__join', { "userID": "" + from + "", "room": "" + room + "" }, socket)
+                    sendMsg('__join', { userID: from, room }, socket)
                     // 收集 绑定 候选人
 
                     peer.onicecandidate = (event) => {
                         if (event.candidate === null) {
                             return
                         }
-                        console.log(event, 'pc_ice')
                         sendMsgCandidate('__ice_candidate', { fromID: from, userID: to, candidate: event.candidate.candidate, sdpMid: event.candidate.sdpMid, sdpMLineIndex: event.candidate.sdpMLineIndex }, socket)
                     }
                     break;
@@ -122,7 +142,6 @@ function usePeer(props) {
 
                     // 交换候选人
                     let iceCandidate = new RTCIceCandidate(evtData.data);
-                    console.log(iceCandidate, 'app_ice')
                     peer.addIceCandidate(iceCandidate)
                     break;
                 case "__offer":
@@ -141,7 +160,6 @@ function usePeer(props) {
 
                     // 打开对端视频
                     peer.ontrack = (evt) => {
-                        console.log(evt)
                         remoteAudioRef.current.srcObject = evt.streams[0]
                         let play = () => {
                             remoteAudioRef.current.play().catch(err => {
@@ -157,20 +175,35 @@ function usePeer(props) {
                 case '__leave':
                     // 离开
                     hangUp()
+                    if (time !== null) {
+                        clearInterval(time)
+                        time = null
+                    }
+                    break;
+                case '__cancel':
+                    if (time !== null) {
+                        clearInterval(time)
+                        time = null
+                    }
                     break;
             }
+            timeout = setTimeout(() => {
+                clearInterval(time)
+                clearTimeout(timeout)
+            }, 30000);
         }
     }
+
+    useEffect(() => {
+        createSocket()
+        // createLocalMedia()
+    })
 
     // 创建Peer 
     useEffect(() => {
         createPeer()
     }, [])
 
-    useEffect(() => {
-        createSocket()
-        // createLocalMedia()
-    })
 
     return <div style={{ padding: 10 }}>
         <div>

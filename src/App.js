@@ -7,11 +7,12 @@ export const MyContext = createContext()
 
 function App() {
   const urlParams = new URLSearchParams(window.location.search).get('userId')
+  const toId = new URLSearchParams(window.location.search).get('toId')
   return (
 
     <div style={{ width: '100vw', height: '100vh' }}>
       <div>
-        <UsePeer user={urlParams ? urlParams : 'th'} />
+        <UsePeer user={urlParams ? urlParams : 'th'} toId={toId} />
       </div>
     </div>
   );
